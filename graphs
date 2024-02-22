@@ -1,0 +1,6 @@
+GRAPH_BOUNCE="(abs (div (sin (pow x x)) (pow 2 (div (sub (pow x x) (div P 2)) P))))"
+GRAPH_PEAKS="(div x (sin (mul x 5)))"
+GRAPH_CIRCLE="E=(sub (add (pow x 2) (pow y 2)) 1)"
+
+GRAPH_HEART="E=(sub (pow (add (pow x 2) (pow y 2) -1) 3) (mul (pow x 2) (pow y 3)))"
+BENCH_HEART="B=(sub (pow (add (pow x 2) (pow y 2) -1) 3) (mul (pow x 2) (pow y 3)))"
