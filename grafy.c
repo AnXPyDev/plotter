@@ -30,7 +30,7 @@ void render_dot(int size, BMP_color color, BMP_color *framebuffer, int w, int h,
     }
 }
 
-void plot_function(Expression function, BMP_color color, BMP_color *framebuffer, int w, int h, double scale, int step, int size) {
+void plot_function(Expression function, BMP_color color, BMP_color *framebuffer, int w, int h, Value scale, int step, int size) {
     const int halfw = w / 2;
     const int halfh = h / 2;
     
@@ -41,13 +41,13 @@ void plot_function(Expression function, BMP_color color, BMP_color *framebuffer,
     Value *xp = &state.vars['x'].value;
 
     for (int x = 0; x < w; x+=step) {
-        *xp = (double)(x - halfw) / scale;
+        *xp = (Value)(x - halfw) / scale;
         Result r = Expression_evaluate(function, &state);
         if (r.error) {
             fprintf(stderr, "Evaluation error: %s\n", r.error);
             return;
         }
-        int y = (int)((r.value) * scale) - halfh + h;
+        int y = (int)((r.value) * scale) + halfh;
         //fprintf(stderr, "x: %i y: %i xv: %lf yv: %lf\n", x, y, *xp, r.value);
         if (y < 0 || y >= h) {
             continue;
@@ -60,7 +60,7 @@ void plot_function(Expression function, BMP_color color, BMP_color *framebuffer,
     }
 }
 
-void plot_equation(Expression equation, double treshold, BMP_color color, BMP_color *framebuffer, int w, int h, double scale, int step, int size) {
+void plot_equation(Expression equation, Value treshold, BMP_color color, BMP_color *framebuffer, int w, int h, Value scale, int step, int size) {
     const int halfw = w / 2;
     const int halfh = h / 2;
     
@@ -73,16 +73,16 @@ void plot_equation(Expression equation, double treshold, BMP_color color, BMP_co
     Value *yp = &state.vars['y'].value;
 
     for (int x = 0; x < w; x += step) {
-        *xp = (double)(x - halfw) / scale;
+        *xp = (Value)(x - halfw) / scale;
         for (int y = 0; y < h; y += step) {
-            *yp = (double)(y - halfh) / scale;
+            *yp = (Value)(y - halfh) / scale;
             Result r = Expression_evaluate(equation, &state);
             if (r.error) {
                 fprintf(stderr, "Evaluation error: %s\n", r.error);
                 return;
             }
 
-            if (fabs(r.value) > treshold) {
+            if (Value_fabs(r.value) > treshold) {
                 continue;
             }
 
@@ -130,9 +130,9 @@ const BMP_color colors[] = {
 };
 
 const int step = 1;
-const int size = 1;
-const double scale = 256;
-const double treshold = 0.005;
+const int size = 3;
+const Value scale = 256;
+const Value treshold = 0.01;
 
 enum PlotType {
     FUNCTION, EQUATION, BENCHMARK
@@ -186,8 +186,8 @@ int main(int argc, const char **argv) {
     }
 
 
-    const int w = 2048;
-    const int h = 2048;
+    const int w = 1024;
+    const int h = 1024;
     BMP_color *framebuffer = malloc(sizeof(BMP_color) * w * h);
     memset(framebuffer, 255, sizeof(BMP_color) * w * h);
 

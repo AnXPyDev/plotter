@@ -4,7 +4,8 @@
 #include <math.h>
 #include <string.h>
 
-typedef double Value;
+#include "mathconfig.h"
+
 typedef unsigned int uint;
 
 enum ExpressionType {
