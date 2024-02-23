@@ -13,7 +13,18 @@
 #include <malloc.h>
 #include <time.h>
 
-void render_dot(int size, BMP_color color, BMP_color *framebuffer, int w, int h, int x, int y) {
+void blend_alpha(BMP_color *pixel, BMP_color color, double alpha) {
+    alpha *= -1;
+    pixel->red += ((int)pixel->red - (int)color.red) * alpha;
+    pixel->green += ((int)pixel->green - (int)color.green) * alpha;
+    pixel->blue += ((int)pixel->blue - (int)color.blue) * alpha;
+}
+
+void render_dot(int size, BMP_color color, double alpha, BMP_color *framebuffer, int w, int h, int x, int y) {
+    if (size == 1) {
+        blend_alpha(&framebuffer[y * w + x], color, alpha);
+    }
+
     int xo = x - size / 2;
     int yo = y - size / 2;
     int xt = xo + size;
@@ -25,7 +36,7 @@ void render_dot(int size, BMP_color color, BMP_color *framebuffer, int w, int h,
 
     for (int ya = yo; ya < yt; ya++) {
         for (int xa = xo; xa < xt; xa++) {
-            framebuffer[ya * w + xa] = color;
+            blend_alpha(&framebuffer[ya * w + xa], color, alpha);
         }
     }
 }
@@ -40,24 +51,65 @@ void plot_function(Expression function, BMP_color color, BMP_color *framebuffer,
 
     Value *xp = &state.vars['x'].value;
 
+    *xp = 0;
+
+    Result r = Expression_evaluate(function, &state);
+    if (r.error) {
+        fprintf(stderr, "Evaluation error: %s\n", r.error);
+        free(r.error);
+        return;
+    }
+
     for (int x = 0; x < w; x+=step) {
         *xp = (Value)(x - halfw) / scale;
         Result r = Expression_evaluate(function, &state);
-        if (r.error) {
-            fprintf(stderr, "Evaluation error: %s\n", r.error);
-            return;
-        }
         int y = (int)((r.value) * scale) + halfh;
         //fprintf(stderr, "x: %i y: %i xv: %lf yv: %lf\n", x, y, *xp, r.value);
         if (y < 0 || y >= h) {
             continue;
         }
-        if (size == 1) {
-            framebuffer[y * w + x] = color;
-        } else {
-            render_dot(size, color, framebuffer, w, h, x, y);
-        }
+        render_dot(size, color, 1, framebuffer, w, h, x, y);
     }
+}
+
+const Value treshold_multiplier = 0.1;
+const int max_depth = 8;
+
+double refine_equation(Expression equation, State *state, Value *xp, Value *yp, Value treshold, Value pixel_size, int depth) {
+    Result r = Expression_evaluate(equation, state);
+
+    if (Value_fabs(r.value) > treshold) {
+        return 0;
+    }
+    
+    if (depth == max_depth) {
+        return 1;
+    }
+
+    Value ox = *xp;
+    Value oy = *yp;
+
+    double alpha = 0.1;
+    const double alpha_per = (1.0 - alpha) * 0.25 * (1.0 + (double)depth);
+
+    *xp -= pixel_size * 0.25;
+    *yp -= pixel_size * 0.25;
+    alpha += alpha_per * refine_equation(equation, state, xp, yp, treshold * treshold_multiplier, pixel_size * 0.5, depth + 1);
+    *xp += pixel_size * 0.25;
+    alpha += alpha_per * refine_equation(equation, state, xp, yp, treshold * treshold_multiplier, pixel_size * 0.5, depth + 1);
+    *yp += pixel_size * 0.25;
+    alpha += alpha_per * refine_equation(equation, state, xp, yp, treshold * treshold_multiplier, pixel_size * 0.5, depth + 1);
+    *xp -= pixel_size * 0.25;
+    alpha += alpha_per * refine_equation(equation, state, xp, yp, treshold * treshold_multiplier, pixel_size * 0.5, depth + 1);
+
+    *xp = ox;
+    *yp = oy;
+
+    if (alpha > 1.0) {
+        alpha = 1.0;
+    }
+
+    return alpha;
 }
 
 void plot_equation(Expression equation, Value treshold, BMP_color color, BMP_color *framebuffer, int w, int h, Value scale, int step, int size) {
@@ -72,28 +124,32 @@ void plot_equation(Expression equation, Value treshold, BMP_color color, BMP_col
     Value *xp = &state.vars['x'].value;
     Value *yp = &state.vars['y'].value;
 
-    for (int x = 0; x < w; x += step) {
-        *xp = (Value)(x - halfw) / scale;
-        for (int y = 0; y < h; y += step) {
-            *yp = (Value)(y - halfh) / scale;
-            Result r = Expression_evaluate(equation, &state);
-            if (r.error) {
-                fprintf(stderr, "Evaluation error: %s\n", r.error);
-                return;
-            }
+    *xp = 0;
+    *yp = 0;
 
-            if (Value_fabs(r.value) > treshold) {
+    Result r = Expression_evaluate(equation, &state);
+    if (r.error) {
+        fprintf(stderr, "Evaluation error: %s\n", r.error);
+        free(r.error);
+        return;
+    }
+
+    const Value scale_inv = 1 / scale;
+
+    for (int x = 0; x < w; x += step) {
+        *xp = ((Value)(x - halfw) + 0.5) * scale_inv;
+        for (int y = 0; y < h; y += step) {
+            *yp = ((Value)(y - halfh) + 0.5) * scale_inv;
+            double alpha = refine_equation(equation, &state, xp, yp, treshold, scale_inv, 0);
+            if (alpha == 0) {
                 continue;
             }
 
-            if (size == 1) {
-                framebuffer[y * w + x] = color;
-            } else {
-                render_dot(size, color, framebuffer, w, h, x, y);
-            }
+            render_dot(size, color, alpha, framebuffer, w, h, x, y);
         }
     }
 }
+
 
 void benchmark_expression(Expression expression, int w, int h) {
     State state;
@@ -130,7 +186,7 @@ const BMP_color colors[] = {
 };
 
 const int step = 1;
-const int size = 3;
+const int size = 1;
 const Value scale = 256;
 const Value treshold = 0.01;
 
