@@ -8,12 +8,8 @@
 
 typedef unsigned int uint;
 
-enum ExpressionType {
-    TYPE_VALUE, TYPE_VARIABLE, TYPE_CALL
-};
-
 typedef struct {
-    enum ExpressionType type;
+    const struct IExpression *interface;
     void *object;
 } Expression;
 
@@ -26,6 +22,7 @@ typedef unsigned char VarIndex;
 
 typedef struct {
     int occupied;
+    int constant;
     Value value;
 } VarSlot;
 
@@ -35,14 +32,36 @@ typedef struct {
 
 struct IExpression {
     Result (*evaluate)(void *this, State *state);
+    int (*isConstant)(void *this, State *state);
+    Expression (*reduce)(void *this, State *state);
+    CompiledExpression (*compile)(void *this, State *state);
     void (*destroy)(void *this);
     void (*print)(void *this, FILE *fp);
 };
 
-Result Expression_evaluate(Expression this, State *state);
-void Expression_destroy(Expression this);
-void Expression_free(Expression this);
-void Expression_print(Expression this, FILE *fp);
+Result Expression_evaluate(Expression this, State *state) {
+    return this.interface->evaluate(this.object, state);
+}
+
+int Expression_isConstant(Expression this, State *state) {
+    return this.interface->isConstant(this.object, state);
+}
+
+void Expression_destroy(Expression this) {
+    return this.interface->destroy(this.object);
+}
+
+CompiledExpression *Expression_compile(Expression this, State *state) {
+    
+};
+
+void Expression_free(Expression this) {
+    return free(this.object);
+}
+
+void Expression_print(Expression this, FILE *fp) {
+    return this.interface->print(this.object, fp);
+}
 
 struct Builtin;
 
@@ -153,44 +172,6 @@ const struct IExpression IVariableExpression = {
     &VariableExpression_destroy,
     &VariableExpression_print
 };
-
-Result Expression_evaluate(Expression this, State *state) {
-    switch (this.type) {
-        case TYPE_VALUE:
-            return ValueExpression_evaluate(this.object, state);
-        case TYPE_VARIABLE:
-            return VariableExpression_evaluate(this.object, state);
-        case TYPE_CALL:
-            return CallExpression_evaluate(this.object, state);
-    }
-}
-
-void Expression_destroy(Expression this) {
-    switch (this.type) {
-        case TYPE_VALUE:
-            return ValueExpression_destroy(this.object);
-        case TYPE_VARIABLE:
-            return VariableExpression_destroy(this.object);
-        case TYPE_CALL:
-            return CallExpression_destroy(this.object);
-    }
-}
-
-void Expression_free(Expression this) {
-    return free(this.object);
-}
-
-void Expression_print(Expression this, FILE *fp) {
-    switch (this.type) {
-        case TYPE_VALUE:
-            return ValueExpression_print(this.object, fp);
-        case TYPE_VARIABLE:
-            return VariableExpression_print(this.object, fp);
-        case TYPE_CALL:
-            return CallExpression_print(this.object, fp);
-    }
-}
-
 
 // Builtins
 
@@ -491,8 +472,7 @@ ParserResult parseCall(char **input) {
     memcpy(ce->args, args, sizeof(Expression) * argc);
     ce->argc = argc;
 
-    //result.expression.interface = &ICallExpression;
-    result.expression.type = TYPE_CALL;
+    result.expression.interface = &ICallExpression;
     result.expression.object = ce;
 
     return result;
@@ -538,8 +518,7 @@ ParserResult parseNumber(char **input) {
     ValueExpression *ve = malloc(sizeof(ValueExpression));
     ve->value = value;
 
-    //result.expression.interface = &IValueExpression;
-    result.expression.type = TYPE_VALUE;
+    result.expression.interface = &IValueExpression;
     result.expression.object = ve;
 
     return result;
@@ -562,8 +541,7 @@ ParserResult parseVar(char **input) {
     VariableExpression *ve = malloc(sizeof(VariableExpression));
     ve->index = index;
 
-    //result.expression.interface = &IVariableExpression;
-    result.expression.type = TYPE_VARIABLE;
+    result.expression.interface = &IVariableExpression;
     result.expression.object = ve;
 
     return result;

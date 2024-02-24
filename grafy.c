@@ -1,11 +1,5 @@
 #define main mathengine_main
-#ifdef MATH_SW
-// Math library using hard coded switch statements for dispatching method calls
-#include "mathengine_sw.c"
-#else
-// Math library using interfaces for dispatching method calls
-#include "mathengine_if.c"
-#endif
+#include "mathengine.c"
 #undef main
 
 #include "bmp.c"
