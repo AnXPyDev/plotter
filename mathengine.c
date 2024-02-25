@@ -8,15 +8,56 @@
 
 typedef unsigned int uint;
 
+typedef Value (*CET_fn_unary_t)(Value);
+typedef Value (*CET_fn_binary_t)(Value, Value);
+typedef Value (*CET_fn_ternary_t)(Value, Value, Value);
+typedef Value (*CET_fn_variable_t)(Value* argv, uint argc);
+
+typedef enum {
+    CET_VALUE, CET_LOOKUP, CET_CALL, CET_BUILTIN
+} ECompiledExpression_Type;
+
+typedef enum {
+    CET_CALL_UNARY, CET_CALL_BINARY, CET_CALL_TERNARY, CET_CALL_VARIABLE
+} ECompiledExpression_Call;
+
+typedef enum {
+    CET_ADD, CET_SUB, CET_NEG, CET_MUL, CET_DIV, CET_INV, CET_MAX, CET_MIN, CET_AVG
+} ECompiledExpression_Builtin;
+
 typedef struct {
-    const struct IExpression *interface;
-    void *object;
-} Expression;
+    uint size;
+    ECompiledExpression_Type type;
+    char expression[0];
+} CompiledExpression;
 
 typedef struct {
     Value value;
-    char *error;
-} Result;
+} CompiledExpression_Value;
+
+typedef struct {
+    Value *valuep;
+} CompiledExpression_Lookup;
+
+typedef union {
+    CompiledExpression_Value value;
+    CompiledExpression_Lookup lookup;
+} CompiledExpression_VL;
+
+typedef struct {
+    ECompiledExpression_Call type;
+    uint argc;
+    void *function;
+    char args[0];
+} CompiledExpression_Call;
+
+typedef struct {
+    ECompiledExpression_Builtin type;
+    uint argc;
+    char args[0];
+} CompiledExpression_Builtin;
+
+// math interface
 
 typedef unsigned char VarIndex;
 
@@ -27,33 +68,73 @@ typedef struct {
 } VarSlot;
 
 typedef struct {
-    VarSlot vars[UCHAR_MAX];
+    VarSlot vars[MATH_MAX_VARS];
 } State;
+
+typedef struct {
+    int used;
+    Value *value;
+} RegisterSlot;
+
+typedef struct {
+    RegisterSlot slots[MATH_MAX_VARS];
+} Register;
+
+typedef struct {
+    uint size;
+    Register reg;
+    CompiledExpression *root;
+    char data[0];
+} Program;
+
+typedef struct {
+    State *state;
+} CompilationContext;
+
+struct VariableOffset {
+    VariableIndex id;
+    uint offset;
+};
+
+typedef struct {
+    uint count;
+    struct VariableOffset *offsets;
+} VariableOffsets;
+
+typedef struct {
+    VariableOffsets offsets;  
+    CompiledExpression *ce;
+    char *error;
+} CompilationResult;
+
+typedef struct {
+    const struct IExpression *interface;
+    void *object;
+} Expression;
+
+typedef struct {
+    Value value;
+    char *error;
+} Result;
 
 struct IExpression {
     Result (*evaluate)(void *this, State *state);
-    int (*isConstant)(void *this, State *state);
-    Expression (*reduce)(void *this, State *state);
-    CompiledExpression (*compile)(void *this, State *state);
     void (*destroy)(void *this);
     void (*print)(void *this, FILE *fp);
+
+    // compilation 
+    int (*isConstant)(void *this, State *state);
+    Expression (*reduce)(void *this, State *state);
+    CompilationResult (*compile)(void *this, CompilationContext ctx);
 };
 
 Result Expression_evaluate(Expression this, State *state) {
     return this.interface->evaluate(this.object, state);
 }
 
-int Expression_isConstant(Expression this, State *state) {
-    return this.interface->isConstant(this.object, state);
-}
-
 void Expression_destroy(Expression this) {
     return this.interface->destroy(this.object);
 }
-
-CompiledExpression *Expression_compile(Expression this, State *state) {
-    
-};
 
 void Expression_free(Expression this) {
     return free(this.object);
@@ -63,549 +144,302 @@ void Expression_print(Expression this, FILE *fp) {
     return this.interface->print(this.object, fp);
 }
 
-struct Builtin;
-
-typedef Result (*fn_builtin)(const struct Builtin *this, const Value *args, uint argc);
-typedef struct Builtin {
-    const char *token;
-    fn_builtin function;
-    void *payload;
-} Builtin;
-
-typedef struct {
-    const Builtin *builtin;
-    Expression *args;
-    uint argc; 
-} CallExpression;
-
-#define this ((CallExpression*)vthis)
-
-Result CallExpression_evaluate(void *vthis, State *state) {
-    Value *args = alloca(this->argc * sizeof(Value));
-    for (uint i = 0; i < this->argc; i++) {
-        Result res = Expression_evaluate(this->args[i], state);
-        if (res.error) {
-            return res;
-        }
-        args[i] = res.value;
-    }
-    return this->builtin->function(this->builtin, args, this->argc);
+Expression Expression_reduce(Expression this, State *state) {
+    return this.interface->reduce(this.object, state);
 }
 
-void CallExpression_destroy(void *vthis) {
-    for (uint i = 0; i < this->argc; i++) {
-        Expression_destroy(this->args[i]);
-        Expression_free(this->args[i]);
-    }
-    free(this->args);
+int Expression_isConstant(Expression this, State *state) {
+    return this.interface->isConstant(this.object, state);
 }
 
-void CallExpression_print(void *vthis, FILE *fp) {
-    fprintf(fp, "(%s", this->builtin->token);
-    for (uint i = 0; i < this->argc; i++) {
-        fprintf(fp, " ");
-        Expression_print(this->args[i], fp);
-    }
-    fprintf(fp, ")");
-}
-
-#undef this
-
-const struct IExpression ICallExpression = {
-    &CallExpression_evaluate,
-    &CallExpression_destroy,
-    &CallExpression_print
+CompilationResult Expression_compile(Expression this, CompilationContext ctx) {
+    return this.interface->compile(this.object, ctx);
 };
-
-typedef struct {
-    Value value;
-} ValueExpression;
-
-#define this ((ValueExpression*)vthis)
-
-Result ValueExpression_evaluate(void *vthis, State *state) {
-    Result result = { this->value, NULL };
-    return result;
-}
-
-void ValueExpression_destroy(void *vthis) {}
-
-void ValueExpression_print(void *vthis, FILE *fp) {
-    fprintf(fp, "%lf", this->value);
-}
-
-#undef this
-
-const struct IExpression IValueExpression = {
-    &ValueExpression_evaluate,
-    &ValueExpression_destroy,
-    &ValueExpression_print
-};
-
-typedef struct {
-    VarIndex index;
-} VariableExpression;
-
-#define this ((VariableExpression*)vthis)
-
-Result VariableExpression_evaluate(void *vthis, State *state) {
-    VarSlot *slot = &state->vars[this->index];
-    Result result = { slot->value, NULL };
-    if (!slot->occupied) {
-        result.error = malloc(64);
-        sprintf(result.error, "Variable is undefined: %c (%d)", this->index, (int)this->index);
+void VariableOffsets_add(VariableOffsets this, uint offset) {
+    for (uint i = 0; i < this.count; i++) {
+        this.offsets[i].offset += offset;
     }
-
-    return result;
 }
 
-void VariableExpression_destroy(void *vthis) {}
+VariableOffsets VariableOffsets_join(VariableOffsets a, VariableOffsets b) {
+    VariableOffsets result;
+    result.count = a.count + b.count;
 
-void VariableExpression_print(void *vthis, FILE *fp) {
-    fprintf(fp, "%c", this->index);
-}
-
-#undef this
-
-const struct IExpression IVariableExpression = {
-    &VariableExpression_evaluate,
-    &VariableExpression_destroy,
-    &VariableExpression_print
-};
-
-// Builtins
-
-Result builtin_add(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 0, NULL };
-    for (uint i = 0; i < argc; i++) {
-        result.value += args[i];
-    }
-    return result;
-}
-
-Result builtin_neg(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 0, NULL };
-    for (uint i = 0; i < argc; i++) {
-        result.value -= args[i];
-    }
-    return result;
-}
-
-Result builtin_sub(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 0, NULL };
-
-    if (argc == 0) {
+    if (result.count == 0) {
+        result.offsets = NULL;
         return result;
     }
 
-    if (argc == 1) {
-        result.value -= args[0];
-        return result;
+    result.offsets = malloc(sizeof(struct VariableOffset) * result.count);
+
+    if (a.count != 0) {
+        memcpy(result.offsets, a.offsets, a.count * sizeof(struct VariableOffset));
+    }
+    if (b.count != 0) {
+        memcpy(result.offsets + a.count, b.offsets, b.count * sizeof(struct VariableOffset));
     }
 
-    result.value = args[0];
-
-    for (uint i = 1; i < argc; i++) {
-        result.value -= args[i];
-    }
-    return result;
-}
-
-Result builtin_mul(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 1, NULL };
-    for (uint i = 0; i < argc; i++) {
-        result.value *= args[i];
-    }
-    return result;
-}
-
-Result builtin_inv(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 1, NULL };
-    for (uint i = 0; i < argc; i++) {
-        result.value /= args[i];
-    }
-    return result;
-}
-
-Result builtin_div(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 1, NULL };
-
-    if (argc == 0) {
-        return result;
-    }
-
-    if (argc == 1) {
-        result.value /= args[0];
-        return result;
-    }
-
-    result.value = args[0];
-
-    for (uint i = 1; i < argc; i++) {
-        result.value /= args[i];
-    }
-    return result;
-}
-
-Result builtin_unary(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 0, NULL };
-    if (argc != 1) {
-        result.error = malloc(64);
-        sprintf(result.error, "Invalid number of arguments (%u) for unary function '%s'", argc, this->token);
-        return result;
-    }
-
-    Value (*function)(Value) = this->payload;
-    result.value = function(args[0]);
-    return result;
-}
-
-Result builtin_binary(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 0, NULL };
-    if (argc != 2) {
-        result.error = malloc(64);
-        sprintf(result.error, "Invalid number of arguments (%u) for binary function '%s'", argc, this->token);
-        return result;
-    }
-
-    Value (*function)(Value, Value) = this->payload;
-    result.value = function(args[0], args[1]);
-    return result;
-}
-
-Result builtin_max(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 0, NULL };
-
-    if (argc == 0) {
-        return result;
-    }
-
-    result.value = args[0];
-    for (uint i = 1; i < argc; i++) {
-        if (result.value < args[i]) {
-            result.value = args[i];
-        }
-    }
-    return result;
-}
-
-Result builtin_min(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 0, NULL };
-
-    if (argc == 0) {
-        return result;
-    }
-
-    result.value = args[0];
-    for (uint i = 1; i < argc; i++) {
-        if (result.value > args[i]) {
-            result.value = args[i];
-        }
-    }
-    return result;
-}
-
-Result builtin_avg(const Builtin *this, const Value *args, uint argc) {
-    Result result = { 0, NULL };
-
-    if (argc == 0) {
-        return result;
-    }
-
-    for (uint i = 0; i < argc; i++) {
-        result.value += args[i];
-    }
-
-    result.value /= (Value)argc;
 
     return result;
 }
 
-Value round(Value x) {
-    return floor(x + 0.5);
-}
-
-Value logn(Value x, Value b) {
-    return log(x) / log(b);
-}
-
-#define ARRLEN(arr) (sizeof(arr) / sizeof(arr[0]))
-
-const Builtin builtins[] = {
-    // basic
-    { "add", builtin_add, NULL },
-    { "neg", builtin_neg, NULL },
-    { "sub", builtin_sub, NULL },
-    { "mul", builtin_mul, NULL },
-    { "inv", builtin_inv, NULL },
-    { "div", builtin_div, NULL },
-    { "pow", builtin_binary, &pow },
-    { "mod", builtin_binary, &fmod },
-    { "sqrt", builtin_unary, &sqrt },
-    
-    { "loge", builtin_unary, &log },
-    { "log10", builtin_unary, &log10 },
-    { "log", builtin_binary, &logn },
-
-    { "ceil", builtin_unary, &ceil },
-    { "floor", builtin_unary, &floor },
-    { "round", builtin_unary, &round },
-    { "abs", builtin_unary, &fabs },
-
-    { "max", builtin_max, NULL },
-    { "min", builtin_min, NULL },
-    { "avg", builtin_avg, NULL },
-
-    // trig
-    { "sin", builtin_unary, &sin },
-    { "cos", builtin_unary, &cos },
-    { "tan", builtin_unary, &tan },
-    { "sinh", builtin_unary, &sinh },
-    { "cosh", builtin_unary, &cosh },
-    { "tanh", builtin_unary, &tanh },
-    { "asin", builtin_unary, &asin },
-    { "acos", builtin_unary, &acos },
-    { "atan", builtin_unary, &atan },
-    { "atan2", builtin_binary, &atan2 },
-};
-
-typedef struct {
-    Expression expression;
-    char *error;
-} ParserResult;
-
-
-ParserResult parseExpression(char**);
-
-ParserResult parseCall(char **input) {
-    ParserResult result;
+CompilationResult createCompiledConst(Value value) {
+    CompilationResult result;
     result.error = NULL;
-
-    char fname[16 + 1];
-    char *bp = fname;
-
-    char c = **input;
-    if (c == ' ' || c == '\0' || c == ')') {
-        result.error = malloc(64);
-        sprintf(result.error, "EOF while parsing call");
-        return result;
-    }
-
-    for (uint i = 0; i < 16; i++) {
-        c = **input;
-        if (c == ' ') {
-            goto next;
-        }
-
-        if (c == ')' || c == '\0') {
-            result.error = malloc(64);
-            sprintf(result.error, "Invalid call syntax / no arguments provided");
-            return result;
-        }
-
-        *bp = c;
-        bp++;
-        (*input)++;
-    }
-
-    result.error = malloc(64);
-    sprintf(result.error, "Call function name too long");
-    return result;
-
-    next:;
-
-    const Builtin *builtin;
-
-    *bp = '\0'; 
-    for (uint i = 0; i < ARRLEN(builtins); i++) {
-        if (strcmp(builtins[i].token, fname) == 0) {
-            builtin = &builtins[i];
-            goto loadargs; 
-        }
-    }
-    
-    result.error = malloc(64);
-    sprintf(result.error, "Function '%s' not defined", fname);
-    return result;
-
-    loadargs:;
-
-    Expression args[32];
-    uint argc = 0;
-
-    for (uint i = 0; i < 32; i++) {
-        while (1) {
-            char c = **input;
-            if (c == ' ') {
-                (*input)++;
-                continue;
-            }
-            if (c == ')') {
-                (*input)++;
-                goto finish;
-            }
-            if (c == '\0') {
-                result.error = malloc(64);
-                sprintf(result.error, "EOF while parsing call");
-                return result;
-            }
-
-            ParserResult r = parseExpression(input);
-            if (r.error) {
-                return r;
-            }
-            args[i] = r.expression;
-            argc++;
-            break;
-        }
-    }
-
-    result.error = malloc(64);
-    sprintf(result.error, "Too many arguments, max is 32");
-    return result;
-
-    finish:;
-
-    CallExpression *ce = malloc(sizeof(CallExpression));
-    ce->builtin = builtin; 
-    ce->args = malloc(sizeof(Expression) * argc);
-    memcpy(ce->args, args, sizeof(Expression) * argc);
-    ce->argc = argc;
-
-    result.expression.interface = &ICallExpression;
-    result.expression.object = ce;
-
+    const uint size = sizeof(CompiledExpression) + sizeof(CompiledExpression_Value);
+    result.ce = malloc(size);
+    result.ce->size = size;
+    result.ce->type = CET_VALUE;
+    CompiledExpression_Value *vl = (void*)&result.ce->expression;
+    vl->value = value;
+    result.offsets.count = 0;
+    result.offsets.offsets = NULL;
     return result;
 }
 
-ParserResult parseNumber(char **input) {
-    ParserResult result;
-    result.error = NULL;
+Program *Program_create(CompilationResult cr) {
+    uint uses_per_var[MATH_MAX_VARS];
+    memset(uses_per_var, 0, MATH_MAX_VARS * sizeof(uint));
+    for (uint i = 0; i < cr.offsets.count; i++) {
+        uses_per_var[cr.offsets.offsets[i].id]++;
+    }
 
-    char buf[32 + 1];
-    char *bp = buf;
+    uint var_count = 0; 
 
-    for (uint i = 0; i < 32; i++) {
-        char c = **input;
-        if (c >= '0' && c <= '9' || c == '.' || c == '-') {
-            *bp = c;
-            bp++;
-            (*input)++;
-        } else if (c == ')' || c == ' ' || c == '\0') {
-            goto end;
+    for (uint i = 0; i < MATH_MAX_VARS; i++) {
+        if (uses_per_var[i]) {
+            var_count++;
+        }
+    }
+
+    const uint prog_size = sizeof(Program) + sizeof(Value) * var_count + cr.ce->size;
+
+    Program *prog = malloc(prog_size);
+    memset(prog, 0, prog_size);
+    prog->size = prog_size;
+    prog->root = (void*)prog + (prog_size - cr.ce->size);
+    
+    memcpy(prog->root, cr.ce, cr.ce->size);
+
+    Value *var = (void*)prog->data;
+    
+    for (uint i = 0; i < MATH_MAX_VARS; i++) {
+        if (uses_per_var[i] >= 2) {
+            prog->reg.slots[i].used = 1;
+            prog->reg.slots[i].value = var;
+            var++;
+        }
+    }
+
+    for (uint i = 0; i < cr.offsets.count; i++) {
+        struct VariableOffset offset = cr.offsets.offsets[i];
+        CompiledExpression *ex = (void*)prog->root + offset.offset;
+        if (uses_per_var[offset.id] > 1) {
+            ((CompiledExpression_VL*)ex->expression)->lookup.valuep = prog->reg.slots[offset.id].value;
         } else {
-            result.error = malloc(64);
-            strcpy(result.error, "Failed to parse number");            
-            return result;
+            ex->type = CET_VALUE;
+            prog->reg.slots[offset.id].used = 1;
+            prog->reg.slots[offset.id].value = &((CompiledExpression_VL*)ex->expression)->value.value;
         }
     }
 
-    result.error = malloc(64);
-    strcpy(result.error, "Number too long");
-    return result;
+    return prog;
+}
 
-    end:;
-    Value value;
-    *bp = '\0';
-    int r = sscanf(buf, "%lf", &value);
 
-    if (r != 1) {
-        result.error = malloc(64);
-        sprintf(result.error, "Failed to parse '%s' as a number", buf);
-        return result;
+
+Value CompiledExpression_evaluate(CompiledExpression*);
+
+Value CET_ADD_eval(uint argc, CompiledExpression *argsp) {
+    Value result = 0;
+    for (uint i = 0; i < argc; i++) {
+        result += CompiledExpression_evaluate(argsp);
+        argsp = (void*)argsp + argsp->size;
     }
-    
-    ValueExpression *ve = malloc(sizeof(ValueExpression));
-    ve->value = value;
-
-    result.expression.interface = &IValueExpression;
-    result.expression.object = ve;
-
     return result;
 }
 
-ParserResult parseVar(char **input) {
-    ParserResult result;
-    result.error = NULL;
+Value CET_NEG_eval(uint argc, CompiledExpression *argsp) {
+    Value result = 0;
+    for (uint i = 0; i < argc; i++) {
+        result -= CompiledExpression_evaluate(argsp);
+        argsp = (void*)argsp + argsp->size;
+    }
+    return result;
+}
 
-    char c = **input;
-    VarIndex index = c;
-    (*input)++;
-    c = **input;
-    if (c != ' ' && c != ')' && c != '\0') {
-        result.error = malloc(64);
-        strcpy(result.error, "Failed to parse variable");
+Value CET_SUB_eval(uint argc, CompiledExpression *argsp) {
+    Value result = 0;
+    if (argc == 0) {
+        return result;
+    } else if (argc == 1) {
+        result -= CompiledExpression_evaluate(argsp);
         return result;
     }
 
-    VariableExpression *ve = malloc(sizeof(VariableExpression));
-    ve->index = index;
+    result = CompiledExpression_evaluate(argsp);
 
-    result.expression.interface = &IVariableExpression;
-    result.expression.object = ve;
-
+    for (uint i = 1; i < argc; i++) {
+        result -= CompiledExpression_evaluate(argsp);
+        argsp = (void*)argsp + argsp->size;
+    }
     return result;
 }
 
-ParserResult parseExpression(char **input) {
-    char c = **input;
-    if (c == '(') {
-        (*input)++;
-        return parseCall(input);        
-    } else if (c >= '0' && c <= '9' || c == '-') {
-        return parseNumber(input);
-    } else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-        return parseVar(input);
+Value CET_MUL_eval(uint argc, CompiledExpression *argsp) {
+    Value result = 1;
+    for (uint i = 0; i < argc; i++) {
+        result *= CompiledExpression_evaluate(argsp);
+        argsp = (void*)argsp + argsp->size;
     }
-
-    ParserResult result;
-    result.error = malloc(64);
-    strcpy(result.error, "Failed to parse expression");
     return result;
 }
 
-void State_init(State *state) {
-    for (uint i = 0; i < UCHAR_MAX; i++) {
-        state->vars[i].occupied = 0;
+Value CET_INV_eval(uint argc, CompiledExpression *argsp) {
+    Value result = 1;
+    for (uint i = 0; i < argc; i++) {
+        result /= CompiledExpression_evaluate(argsp);
+        argsp = (void*)argsp + argsp->size;
+    }
+    return result;
+}
+
+Value CET_DIV_eval(uint argc, CompiledExpression *argsp) {
+    Value result = 1;
+    if (argc == 0) {
+        return result;
+    } else if (argc == 1) {
+        result /= CompiledExpression_evaluate(argsp);
+        return result;
     }
 
-    state->vars['P'].occupied = 1;
-    state->vars['P'].value = M_PI;
-    state->vars['E'].occupied = 1;
-    state->vars['E'].value = M_E;
+    result = CompiledExpression_evaluate(argsp);
+    argsp = (void*)argsp + argsp->size;
+
+    for (uint i = 1; i < argc; i++) {
+        result /= CompiledExpression_evaluate(argsp);
+        argsp = (void*)argsp + argsp->size;
+    }
+    return result;
+}
+
+Value CET_MAX_eval(uint argc, CompiledExpression *argsp) {
+    Value result = 0;
+
+    if (argc == 0) {
+        return result;
+    }
+
+    result = CompiledExpression_evaluate(argsp);
+    argsp = (void*)argsp + argsp->size;
+
+    for (uint i = 1; i < argc; i++) {
+        Value a = CompiledExpression_evaluate(argsp);
+        argsp = (void*)argsp + argsp->size;
+        if (a > result) {
+            result = a;
+        }
+    }
+    return result;
+}
+
+Value CET_MIN_eval(uint argc, CompiledExpression *argsp) {
+    Value result = 0;
+
+    if (argc == 0) {
+        return result;
+    }
+
+    result = CompiledExpression_evaluate(argsp);
+    argsp = (void*)argsp + argsp->size;
+
+    for (uint i = 1; i < argc; i++) {
+        Value a = CompiledExpression_evaluate(argsp);
+        argsp = (void*)argsp + argsp->size;
+        if (a < result) {
+            result = a;
+        }
+    }
+    return result;
+}
+
+Value CET_AVG_eval(uint argc, CompiledExpression *argsp) {
+    Value sum = 0;
+
+    if (argc == 0) {
+        return sum;
+    }
+
+    for (uint i = 0; i < argc; i++) {
+        sum += CompiledExpression_evaluate(argsp);
+        argsp = (void*)argsp + argsp->size;
+    }
+
+    return sum / (Value)argc;
 }
 
 
-int main(int argc, const char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "Provide expression\n");
-        return 1;
+Value CompiledExpression_Builtin_evaluate(CompiledExpression_Builtin *this) {
+    uint argc = this->argc;
+    CompiledExpression *argsp = (void*)this + sizeof(CompiledExpression_Builtin);
+    switch (this->type) {
+        case CET_ADD:
+            return CET_ADD_eval(argc, argsp);
+        case CET_NEG:
+            return CET_NEG_eval(argc, argsp);
+        case CET_SUB:
+            return CET_SUB_eval(argc, argsp);
+        case CET_MUL:
+            return CET_MUL_eval(argc, argsp);
+        case CET_INV:
+            return CET_INV_eval(argc, argsp);
+        case CET_DIV:
+            return CET_DIV_eval(argc, argsp);
+        case CET_MAX:
+            return CET_MAX_eval(argc, argsp);
+        case CET_MIN:
+            return CET_MAX_eval(argc, argsp);
+        case CET_AVG:
+            return CET_MAX_eval(argc, argsp);
+        default:
+            return 0;
     }
+}
 
-    char in[256];
-    strcpy(in, argv[1]);
-    char *cursor = in;
-    ParserResult result = parseExpression(&cursor);
-    if (result.error) {
-        fprintf(stderr, "Parser error: %s\n", result.error);
-        free(result.error);
-        return 1;
+Value CompiledExpression_Call_evaluate(CompiledExpression_Call *this) {
+    CompiledExpression *argsp = (void*)this + sizeof(CompiledExpression_Call);
+    switch (this->type) {
+        case CET_CALL_UNARY:
+            Value arg = CompiledExpression_evaluate(argsp);
+            Value (*ufn)(Value) = this->function;
+            return ufn(arg);
+        case CET_CALL_BINARY:
+            Value arg1 = CompiledExpression_evaluate(argsp);
+            Value arg2 = CompiledExpression_evaluate((void*)argsp + argsp->size);
+            Value(*bfn)(Value, Value) = this->function;
+            return bfn(arg1, arg2);
+        default:
+            return 0;
     }
+}
 
-    fprintf(stderr, "Expression: ");
-    Expression_print(result.expression, stderr);
-    fprintf(stderr, "\n");
+#define CE_EXPRESSION(ce) ((void*)ce + sizeof(CompiledExpression))
 
-    State state;
-    State_init(&state);
-
-    Result res = Expression_evaluate(result.expression, &state);
-    if (res.error) {
-        fprintf(stderr, "Evaluation error: %s\n", res.error);
-    } else {
-        fprintf(stderr, "Evaluated: %lf\n", res.value);
+Value CompiledExpression_evaluate(CompiledExpression *this) {
+    switch (this->type) {
+        case CET_VALUE:
+            return ((CompiledExpression_Value*)CE_EXPRESSION(this))->value;
+        case CET_LOOKUP:
+            return *((CompiledExpression_Lookup*)CE_EXPRESSION(this))->valuep;
+        case CET_BUILTIN:
+            return CompiledExpression_Builtin_evaluate((CompiledExpression_Builtin*)CE_EXPRESSION(this));
+        case CET_CALL:
+            return CompiledExpression_Call_evaluate((CompiledExpression_Call*)CE_EXPRESSION(this));
+        default:
+            return 0;
     }
+}
 
-    Expression_destroy(result.expression);
-    Expression_free(result.expression);
+Value Program_execute(Program *program) {
+    return CompiledExpression_evaluate(program->root);
 }

@@ -1,5 +1,5 @@
 #define main mathengine_main
-#include "mathengine.c"
+#include "mathimpl.c"
 #undef main
 
 #include "bmp.c"
@@ -151,26 +151,58 @@ void benchmark_expression(Expression expression, int w, int h) {
     state.vars['x'].occupied = 1;
     state.vars['y'].occupied = 1;
 
-    Value *xp = &state.vars['x'].value;
-    Value *yp = &state.vars['y'].value;
+    { 
+        Value *xp = &state.vars['x'].value;
+        Value *yp = &state.vars['y'].value;
 
-    clock_t c_begin = clock();
+        clock_t c_begin = clock();
 
-    for (int x = 0; x < w; x++) {
-        *xp = (double)x;
-        for (int y = 0; y < h; y++) {
-            *yp = (double)y;
-            Result r = Expression_evaluate(expression, &state);
-            if (r.error) {
-                fprintf(stderr, "Evaluation error: %s\n", r.error);
-                return;
+        for (int x = 0; x < w; x++) {
+            *xp = (double)x;
+            for (int y = 0; y < h; y++) {
+                *yp = (double)y;
+                Result r = Expression_evaluate(expression, &state);
+                if (r.error) {
+                    fprintf(stderr, "Evaluation error: %s\n", r.error);
+                    return;
+                }
             }
         }
+
+        clock_t c_end = clock();
+
+        fprintf(stderr, "Clocks taken for %d executions of uncompiled expression: %ld\n", w * h, c_end - c_begin);
     }
 
-    clock_t c_end = clock();
 
-    fprintf(stderr, "Clocks taken for %d executions: %ld\n", w * h, c_end - c_begin);
+    {
+        CompilationContext ctx = { &state };
+        CompilationResult cr = Expression_compile(expression, ctx);
+        if (cr.error) {
+            fprintf(stderr, "Error: %s\n", cr.error);
+            free(cr.error);
+            return;
+        }
+
+        Program *prog = Program_create(cr);
+        Value *xp = prog->reg.slots['x'].value;
+        Value *yp = prog->reg.slots['y'].value;
+
+        clock_t c_begin = clock();
+
+        for (int x = 0; x < w; x++) {
+            *xp = (double)x;
+            for (int y = 0; y < h; y++) {
+                *yp = (double)y;
+                Value r = Program_execute(prog);
+            }
+        }
+
+        clock_t c_end = clock();
+
+        fprintf(stderr, "Clocks taken for %d executions of compiled expression: %ld\n", w * h, c_end - c_begin);
+    }
+
 }
 
 const BMP_color colors[] = {
@@ -211,7 +243,7 @@ void plot_expression(enum PlotType type, const char *source, BMP_color *fb, int 
             plot_equation(result.expression, treshold, colors[color_index], fb, w, h, scale, step, size);
             break;
         case BENCHMARK:
-            benchmark_expression(result.expression, w, h);
+            benchmark_expression(result.expression, w * 4, h * 4);
     }
 
     color_index = (color_index + 1) % ARRLEN(colors);
