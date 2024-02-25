@@ -7,6 +7,8 @@
 #include <malloc.h>
 #include <time.h>
 
+#include "plottercfg.h"
+
 void blend_alpha(BMP_color *pixel, BMP_color color, double alpha) {
     alpha *= -1;
     pixel->red += ((int)pixel->red - (int)color.red) * alpha;
@@ -66,8 +68,6 @@ void plot_function(Expression function, BMP_color color, BMP_color *framebuffer,
     }
 }
 
-const Value treshold_multiplier = 0.1;
-const int max_depth = 8;
 
 double refine_equation(Expression equation, State *state, Value *xp, Value *yp, Value treshold, Value pixel_size, int depth) {
     Result r = Expression_evaluate(equation, state);
@@ -211,10 +211,6 @@ const BMP_color colors[] = {
     {0, 0, 255},
 };
 
-const int step = 1;
-const int size = 1;
-const Value scale = 256;
-const Value treshold = 0.01;
 
 enum PlotType {
     FUNCTION, EQUATION, BENCHMARK
@@ -256,7 +252,7 @@ int main(int argc, const char **argv) {
     int code = 0;
 
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s (output file) (math expression)\n", argv[0]);
+        fprintf(stderr, "Usage: %s (output file) [F=/E=/B=](math expression)...\n", argv[0]);
         return 1;
     }
     
@@ -267,9 +263,6 @@ int main(int argc, const char **argv) {
         goto cleanup;
     }
 
-
-    const int w = 1024;
-    const int h = 1024;
     BMP_color *framebuffer = malloc(sizeof(BMP_color) * w * h);
     memset(framebuffer, 255, sizeof(BMP_color) * w * h);
 
